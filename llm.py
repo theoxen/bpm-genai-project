@@ -25,11 +25,23 @@ MODELS = {
 MAX_TOKENS = {"Model B - gpt-oss-120b (Groq)": 16000}
 
 
+def get_key(key_name):
+    """The key from an environment variable, else from Streamlit secrets (secrets.toml or the Cloud settings)."""
+    if os.environ.get(key_name):
+        return os.environ[key_name]
+    try:
+        import streamlit as st
+        return st.secrets.get(key_name)
+    except Exception:  # not running in Streamlit, or no secrets file
+        return None
+
+
 def get_client(model_name):
     _, base_url, key_name = MODELS[model_name]
-    if not os.environ.get(key_name):
+    key = get_key(key_name)
+    if not key:
         raise RuntimeError(f"Missing API key: set {key_name}")
-    return OpenAI(base_url=base_url, api_key=os.environ[key_name])
+    return OpenAI(base_url=base_url, api_key=key)
 
 
 def ask_llm(model_name, system, prompt):
