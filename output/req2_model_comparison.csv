@@ -1,0 +1,7 @@
+log,miner,places,transitions,silent_transitions,arcs,sound,fitness,fitting_traces_%,precision
+original,alpha,8,5,0,15,False,0.937,0.0,1.0
+original,heuristic,8,6,1,16,True,0.977,84.0,1.0
+original,inductive,8,9,4,20,True,1.0,100.0,0.729
+error_free,alpha,6,5,0,10,True,1.0,100.0,1.0
+error_free,heuristic,6,5,0,10,True,1.0,100.0,1.0
+error_free,inductive,6,5,0,10,True,1.0,100.0,1.0

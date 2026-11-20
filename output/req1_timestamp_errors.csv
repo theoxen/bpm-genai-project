@@ -1,0 +1,23 @@
+CaseID,Activity,Timestamp,ErrorType,Explanation
+Case_4,Approve Claim,2026-09-04 12:27:00,Impossible order,'Approve Claim' is timestamped before 'Evaluate Claim' - the claim is approved before it is evaluated.
+Case_5,Approve Claim,2026-09-05 13:55:00,Negative duration,Recorded after 'Evaluate Claim' but timestamped 15 min before it (clock / data-entry error).
+Case_6,Approve Claim,2026-09-06 11:32:00,Negative duration,Recorded after 'Evaluate Claim' but timestamped 15 min before it (clock / data-entry error).
+Case_13,Evaluate Claim,2026-09-13T16,Truncated timestamp,"'2026-09-13T16' has no minutes/seconds - we only know the hour, not the exact time."
+Case_15,Approve Claim,2026-09-15 13:27:00,Impossible order,'Approve Claim' is timestamped before 'Evaluate Claim' - the claim is approved before it is evaluated.
+Case_16,Verify Documents,2026-09-16T12,Truncated timestamp,"'2026-09-16T12' has no minutes/seconds - we only know the hour, not the exact time."
+Case_20,Register Claim,2026-09-20T10,Truncated timestamp,"'2026-09-20T10' has no minutes/seconds - we only know the hour, not the exact time."
+Case_28,Verify Documents,,Missing timestamp,"The timestamp is empty, so we do not know when the activity happened."
+Case_29,Approve Claim,2026-09-29 11:35:00,Impossible order,'Approve Claim' is timestamped before 'Evaluate Claim' - the claim is approved before it is evaluated.
+Case_31,Approve Claim,2026-10-01 13:03:00,Negative duration,Recorded after 'Evaluate Claim' but timestamped 15 min before it (clock / data-entry error).
+Case_32,Approve Claim,2026-10-02 13:31:00,Impossible order,'Approve Claim' is timestamped before 'Evaluate Claim' - the claim is approved before it is evaluated.
+Case_34,Evaluate Claim,,Missing timestamp,"The timestamp is empty, so we do not know when the activity happened."
+Case_36,Approve Claim,2026-10-06 13:07:00,Impossible order,'Approve Claim' is timestamped before 'Evaluate Claim' - the claim is approved before it is evaluated.
+Case_60,Approve Claim,2026-10-30 15:36:00,Negative duration,Recorded after 'Evaluate Claim' but timestamped 15 min before it (clock / data-entry error).
+Case_70,Evaluate Claim,,Missing timestamp,"The timestamp is empty, so we do not know when the activity happened."
+Case_75,Close Claim,2026-11-14T16,Truncated timestamp,"'2026-11-14T16' has no minutes/seconds - we only know the hour, not the exact time."
+Case_77,Register Claim,,Missing timestamp,"The timestamp is empty, so we do not know when the activity happened."
+Case_81,Approve Claim,2026-11-20 13:18:00,Negative duration,Recorded after 'Evaluate Claim' but timestamped 15 min before it (clock / data-entry error).
+Case_82,Approve Claim,2026-11-21 14:08:00,Impossible order,'Approve Claim' is timestamped before 'Evaluate Claim' - the claim is approved before it is evaluated.
+Case_84,Evaluate Claim,,Missing timestamp,"The timestamp is empty, so we do not know when the activity happened."
+Case_93,Close Claim,2026-12-02T15,Truncated timestamp,"'2026-12-02T15' has no minutes/seconds - we only know the hour, not the exact time."
+Case_95,Approve Claim,2026-12-04 12:48:00,Impossible order,'Approve Claim' is timestamped before 'Evaluate Claim' - the claim is approved before it is evaluated.
