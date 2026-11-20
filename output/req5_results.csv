@@ -1,5 +1,5 @@
 solution,model,accuracy,precision,recall,f1,correctness,hallucination,error,llm_seconds,exec_seconds,total_seconds,input_tokens,output_tokens,total_tokens
-Solution B - Machine learning,Model A - Gemini 3.5 Flash,0.93,1.0,0.682,0.811,0.591,0.0,,61.48,0.11,61.59,724,1462,2186
-Solution A - Statistical,Model A - Gemini 3.5 Flash,1.0,1.0,1.0,1.0,0.682,0.0,,72.23,0.05,72.28,708,1403,2111
-Solution A - Statistical,Model B - gpt-oss-120b (Groq),0.78,0.0,0.0,0.0,0.0,1.0,AttributeError: 'numpy.timedelta64' object has no attribute 'total_seconds',16.06,0.14,16.2,647,2640,3287
-Solution B - Machine learning,Model B - gpt-oss-120b (Groq),0.99,1.0,0.955,0.977,1.0,0.0,,24.65,0.95,25.6,665,2477,3142
+Solution A - Statistical,Model A - Gemini 3.5 Flash,0.93,1.0,0.682,0.811,0.591,0.0,,51.93,0.11,52.04,890,1039,1929
+Solution B - Machine learning,Model A - Gemini 3.5 Flash,0.91,1.0,0.591,0.743,0.682,0.0,,96.15,2.58,98.73,906,1812,2718
+Solution A - Statistical,Model B - gpt-oss-120b (Groq),0.99,1.0,0.955,0.977,0.727,0.0,,7.1,0.05,7.15,810,3237,4047
+Solution B - Machine learning,Model B - gpt-oss-120b (Groq),0.78,0.0,0.0,0.0,0.0,1.0,"TypeError: Invalid value '2026-09-01 12:53:00' for dtype 'str'. Value should be a string or missing value, got 'Timestamp' instead.",5.43,1.18,6.61,828,2539,3367

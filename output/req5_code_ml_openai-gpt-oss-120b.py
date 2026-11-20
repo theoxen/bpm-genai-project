@@ -1,219 +1,196 @@
 import pandas as pd
 import numpy as np
-from datetime import timedelta
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.pipeline import Pipeline
-
-ACTIVITY_ORDER = [
-    "Register Claim",
-    "Verify Documents",
-    "Evaluate Claim",
-    "Approve Claim",
-    "Close Claim",
-]
-
-def _parse_timestamp(ts):
-    """
-    Parse the raw timestamp string.
-    Returns:
-        - full datetime if complete (e.g. 2026-09-01T12:53:00)
-        - datetime at hour‑start if only hour is present (e.g. 2026-09-13T16)
-        - pd.NaT for missing/invalid values
-    """
-    if pd.isna(ts):
-        return pd.NaT, "missing"
-    ts = str(ts)
-    # full ISO datetime
-    try:
-        dt = pd.to_datetime(ts, format="%Y-%m-%dT%H:%M:%S")
-        return dt, "full"
-    except (ValueError, TypeError):
-        pass
-    # hour‑only format
-    try:
-        dt = pd.to_datetime(ts, format="%Y-%m-%dT%H")
-        return dt, "hour"
-    except (ValueError, TypeError):
-        return pd.NaT, "invalid"
-
 
 def fix_timestamps(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Repair timestamp errors in a process‑mining event log.
-
+    Repair timestamps in an insurance‑claims event log.
+    
     Parameters
     ----------
     df : pd.DataFrame
-        Columns: CaseID, Activity, Timestamp (raw string or NaN), User, Cost
+        Columns: CaseID, Activity, Timestamp, User, Cost.
+        Timestamp is a string or NaN (float).
 
     Returns
     -------
     pd.DataFrame
-        Same rows/columns, but Timestamp column converted to pandas datetime
-        and corrected where necessary.
+        Same rows/columns, Timestamp converted to pandas datetime and corrected.
     """
-    df = df.copy()
+    # ------------------------------------------------------------------
+    # 1. Prepare a working copy and auxiliary structures
+    # ------------------------------------------------------------------
+    df_fixed = df.copy()
+    act_order = ['Register Claim', 'Verify Documents',
+                 'Evaluate Claim', 'Approve Claim', 'Close Claim']
+    act_to_idx = {a: i for i, a in enumerate(act_order)}
+    df_fixed['ActIdx'] = df_fixed['Activity'].map(act_to_idx)
 
     # ------------------------------------------------------------------
-    # 1. Parse timestamps and flag the kind of problem
+    # 2. Detect truncated timestamps (hour‑only strings)
     # ------------------------------------------------------------------
-    parsed = df["Timestamp"].apply(_parse_timestamp)
-    df["_ts_parsed"] = parsed.apply(lambda x: x[0])
-    df["_ts_kind"]   = parsed.apply(lambda x: x[1])   # full / hour / missing / invalid
+    def is_truncated(ts):
+        if pd.isna(ts):
+            return False
+        # full iso‑datetime has at least 19 characters (e.g. 2026-09-01T12:53:00)
+        return isinstance(ts, str) and len(ts.strip()) <= 13  # e.g. "2026-09-13T16"
+
+    trunc_mask = df_fixed['Timestamp'].apply(is_truncated)
 
     # ------------------------------------------------------------------
-    # 2. Sort rows by case and by the predefined activity order
+    # 3. Parse *full* timestamps (ignore truncated & NaN for now)
     # ------------------------------------------------------------------
-    df["activity_rank"] = df["Activity"].apply(lambda a: ACTIVITY_ORDER.index(a)
-                                               if a in ACTIVITY_ORDER else -1)
-    df.sort_values(["CaseID", "activity_rank"], inplace=True)
-    df.reset_index(drop=True, inplace=True)
+    full_mask = ~df_fixed['Timestamp'].isna() & ~trunc_mask
+    parsed_full = pd.to_datetime(df_fixed.loc[full_mask, 'Timestamp'],
+                                 errors='coerce')
+    df_fixed.loc[full_mask, 'ParsedTS'] = parsed_full
 
     # ------------------------------------------------------------------
-    # 3. Build training data from rows that are *surely* correct
+    # 4. Build training set from *correct* transitions
+    #    – both previous and current timestamps are parsed
+    #    – duration > 0
     # ------------------------------------------------------------------
-    # A row is correct if:
-    #   - timestamp is full datetime (not hour‑only, not missing)
-    #   - its duration w.r.t. previous activity in the same case is non‑negative
-    #   - the activity order respects the global order (we already sorted)
     train_rows = []
-    train_target = []
+    train_targets = []
 
-    # iterate case by case
-    for case_id, case_grp in df.groupby("CaseID"):
+    # iterate case by case (preserves order)
+    for case_id, grp in df_fixed.groupby('CaseID'):
+        grp = grp.sort_values('ActIdx')          # enforce expected order
         prev_ts = None
-        for _, row in case_grp.iterrows():
-            ts = row["_ts_parsed"]
-            kind = row["_ts_kind"]
-            if kind == "full":
-                if prev_ts is not None:
-                    dur = (ts - prev_ts).total_seconds()
-                    if dur >= 0:                     # non‑negative duration
-                        train_rows.append(row)
-                        train_target.append(dur)
-                prev_ts = ts
+        prev_idx = None
+        for _, row in grp.iterrows():
+            cur_ts = row['ParsedTS']
+            if pd.isna(cur_ts):
+                prev_ts = None
+                prev_idx = None
+                continue
+            if prev_ts is not None:
+                dur = (cur_ts - prev_ts).total_seconds()
+                if dur > 0:                       # only keep sensible durations
+                    # features: current Activity, User, Cost
+                    train_rows.append({
+                        'Activity': row['Activity'],
+                        'User': row['User'],
+                        'Cost': row['Cost']
+                    })
+                    train_targets.append(dur)
+            prev_ts = cur_ts
+            prev_idx = row['ActIdx']
 
     if not train_rows:
-        raise ValueError("No clean rows found to train the model.")
+        raise ValueError("No correct transitions found – cannot train model.")
 
-    train_df = pd.DataFrame(train_rows)
+    train_X = pd.DataFrame(train_rows)
+    y = np.array(train_targets)
 
     # ------------------------------------------------------------------
-    # 4. Train a regression model to predict *duration since previous activity*
+    # 5. Encode categorical columns and train regression model
     # ------------------------------------------------------------------
-    feature_cols = ["Activity", "User", "Cost"]
-    X_train = train_df[feature_cols]
-    y_train = np.array(train_target)
-
-    categorical = ["Activity", "User"]
-    numeric = ["Cost"]
+    categorical_features = ['Activity', 'User']
+    numeric_features = ['Cost']
 
     preproc = ColumnTransformer(
         transformers=[
-            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical),
-            ("num", "passthrough", numeric),
+            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features),
+            ('num', 'passthrough', numeric_features)
         ]
     )
+    X_enc = preproc.fit_transform(train_X)
 
-    model = RandomForestRegressor(
-        n_estimators=200,
-        random_state=42,
+    rf = RandomForestRegressor(
+        n_estimators=300,
+        random_state=0,
         n_jobs=-1,
-        min_samples_leaf=2,
+        max_depth=None,
+        min_samples_leaf=1
     )
-
-    pipe = Pipeline(steps=[("preproc", preproc), ("model", model)])
-    pipe.fit(X_train, y_train)
+    rf.fit(X_enc, y)
 
     # ------------------------------------------------------------------
-    # 5. Helper to obtain a predicted duration for a given row
+    # 6. Helper to predict a duration (in seconds) for a given row
     # ------------------------------------------------------------------
-    def predict_duration(row):
-        return pipe.predict(row[feature_cols].to_frame().T)[0]
+    def predict_duration(activity, user, cost):
+        Xrow = pd.DataFrame([{'Activity': activity,
+                              'User': user,
+                              'Cost': cost}])
+        Xrow_enc = preproc.transform(Xrow)
+        return rf.predict(Xrow_enc)[0]
 
     # ------------------------------------------------------------------
-    # 6. Estimate a fallback timestamp for the very first activity
+    # 7. Determine a fallback start‑time for cases whose first event is broken
     # ------------------------------------------------------------------
-    # median of all existing Register Claim timestamps (full ones)
-    register_full = df[
-        (df["Activity"] == "Register Claim") & (df["_ts_kind"] == "full")
-    ]["_ts_parsed"]
-    if not register_full.empty:
-        median_register_ts = register_full.median()
-    else:
-        # arbitrary fallback – start of 2026‑01‑01
-        median_register_ts = pd.Timestamp("2026-01-01 08:00:00")
+    start_times = df_fixed.loc[
+        (df_fixed['Activity'] == 'Register Claim') &
+        df_fixed['ParsedTS'].notna(),
+        'ParsedTS'
+    ]
+    fallback_start = start_times.median() if not start_times.empty else pd.Timestamp.now()
 
     # ------------------------------------------------------------------
-    # 7. Walk through each case and repair timestamps
+    # 8. Re‑construct timestamps case by case
     # ------------------------------------------------------------------
-    repaired_ts = []
+    corrected_ts = {}
 
-    for case_id, case_grp in df.groupby("CaseID"):
-        # keep rows in activity order
-        case_grp = case_grp.sort_values("activity_rank")
-        prev_ts = None
+    for case_id, grp in df_fixed.groupby('CaseID'):
+        # sort by expected activity order
+        grp = grp.sort_values('ActIdx')
+        last_ts = None
 
-        for idx, row in case_grp.iterrows():
-            kind = row["_ts_kind"]
-            raw_ts = row["_ts_parsed"]
+        for idx, row in grp.iterrows():
+            cur_act = row['Activity']
+            cur_user = row['User']
+            cur_cost = row['Cost']
+            cur_parsed = row['ParsedTS']
 
-            # ---- first activity handling --------------------------------
-            if row["Activity"] == "Register Claim":
-                if kind == "full":
-                    new_ts = raw_ts
-                elif kind == "hour":
-                    # hour‑only: keep hour start (no better guess)
-                    new_ts = raw_ts
-                else:   # missing / invalid
-                    new_ts = median_register_ts
-                repaired_ts.append(new_ts)
-                prev_ts = new_ts
+            # Detect if the current timestamp is *reliable*:
+            #   – not NaN, not truncated,
+            #   – and (if there is a previous timestamp) duration > 0.
+            reliable = False
+            if pd.notna(cur_parsed):
+                if last_ts is None:
+                    reliable = True
+                else:
+                    dur = (cur_parsed - last_ts).total_seconds()
+                    if dur > 0:
+                        reliable = True
+
+            if reliable:
+                # keep the original good timestamp
+                corrected_ts[idx] = cur_parsed
+                last_ts = cur_parsed
                 continue
 
-            # ---- subsequent activities -----------------------------------
-            # Determine if timestamp needs fixing
-            needs_fix = False
+            # ---- otherwise we need to *predict* the timestamp ----
+            # If this is the first activity, start from fallback
+            if last_ts is None:
+                # use median start time as base
+                pred_ts = fallback_start
+                # optionally adjust by predicted offset from start (0 seconds)
+                corrected_ts[idx] = pred_ts
+                last_ts = pred_ts
+                continue
 
-            if kind == "missing" or kind == "invalid":
-                needs_fix = True
-            elif kind == "hour":
-                # hour‑only: we will replace it with a value inside the hour
-                needs_fix = True
-            elif raw_ts < prev_ts:
-                # negative duration / impossible order
-                needs_fix = True
+            # Predict duration from previous activity to current
+            pred_dur_sec = predict_duration(cur_act, cur_user, cur_cost)
+            # Ensure a minimum positive offset (e.g., 1 second) to avoid zero/negative loops
+            pred_dur_sec = max(pred_dur_sec, 1.0)
 
-            if needs_fix:
-                # predict duration (seconds) from previous activity
-                pred_sec = max(predict_duration(row), 0.0)
-
-                if kind == "hour":
-                    # keep within the same hour
-                    max_offset = 3600 - 1  # stay inside the hour
-                    offset = min(pred_sec, max_offset)
-                    new_ts = raw_ts + timedelta(seconds=offset)
-                else:
-                    new_ts = prev_ts + timedelta(seconds=pred_sec)
-            else:
-                # timestamp is fine
-                new_ts = raw_ts
-
-            repaired_ts.append(new_ts)
-            prev_ts = new_ts
+            pred_ts = last_ts + pd.Timedelta(seconds=pred_dur_sec)
+            corrected_ts[idx] = pred_ts
+            last_ts = pred_ts
 
     # ------------------------------------------------------------------
-    # 8. Assign repaired timestamps back to the dataframe
+    # 9. Write corrected timestamps back, preserving original index/order
     # ------------------------------------------------------------------
-    df["Timestamp"] = repaired_ts
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"])
+    for idx, ts in corrected_ts.items():
+        df_fixed.at[idx, 'Timestamp'] = ts
 
-    # clean auxiliary columns
-    df.drop(columns=["_ts_parsed", "_ts_kind", "activity_rank"], inplace=True)
+    # Convert column to datetime (already datetime objects)
+    df_fixed['Timestamp'] = pd.to_datetime(df_fixed['Timestamp'], errors='coerce')
 
-    # reorder columns to original order
-    df = df[["CaseID", "Activity", "Timestamp", "User", "Cost"]]
+    # Drop helper columns before returning
+    df_fixed = df_fixed.drop(columns=['ActIdx', 'ParsedTS'])
 
-    return df
+    return df_fixed

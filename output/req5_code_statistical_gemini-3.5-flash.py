@@ -1,62 +1,99 @@
- < 2:
-        return None
-    try:
-        dt = pd.to_datetime(s)
-        if pd.isna(dt):
-            return None
-        return dt
-    except Exception:
-        return None
+import numpy as np
+import pandas as pd
+
 
 def fix_timestamps(df):
-    out_df = df.copy()
-    
-    act_order = ['Register Claim', 'Verify Documents', 'Evaluate Claim', 'Approve Claim', 'Close Claim']
-    act_to_idx = {act: i for i, act in enumerate(act_order)}
-    
-    # 1. Compute median durations for consecutive activities
-    deltas_sec = [[] for _ in range(4)]
-    
-    # Store parsed raw timestamps per case
-    case_data = []
-    
-    for case_id, group in df.groupby('CaseID', sort=False):
-        raw_vals = [None] * 5
-        row_indices = [None] * 5
-        for idx, row in group.iterrows():
-            act = row['Activity']
-            if act in act_to_idx:
-                a_idx = act_to_idx[act]
-                raw_vals[a_idx] = row['Timestamp']
-                row_indices[a_idx] = idx
-        
-        parsed_ts = [parse_valid_ts(v) for v in raw_vals]
-        case_data.append((row_indices, parsed_ts))
-        
-        for k in range(4):
-            t1, t2 = parsed_ts[k], parsed_ts[k+1]
-            if t1 is not None and t2 is not None and t2 > t1:
-                deltas_sec[k].append((t2 - t1).total_seconds())
-                
-    median_deltas_sec = []
-    median_deltas = []
-    for k in range(4):
-        if deltas_sec[k]:
-            med = float(np.median(deltas_sec[k]))
+    result_df = df.copy()
+
+    # Identify invalid/missing/truncated timestamps
+    def is_invalid_val(val):
+        if pd.isna(val):
+            return True
+        s = str(val).strip()
+        # Truncated timestamps like "2026-09-13T16" lack minute/second colons
+        if ":" not in s or len(s) < 19:
+            return True
+        return False
+
+    timestamps = []
+    is_valid_initial = []
+
+    for val in result_df["Timestamp"]:
+        if is_invalid_val(val):
+            timestamps.append(pd.NaT)
+            is_valid_initial.append(False)
         else:
-            med = 3600.0  # fallback if no valid pairs
-        median_deltas_sec.append(med)
-        median_deltas.append(pd.Timedelta(seconds=med))
-        
-    # 2. Repair timestamps for each case
-    repaired_series = pd.Series(index=df.index, dtype='datetime64[ns]')
-    
-    for row_indices, parsed_ts in case_data:
-        V = [i for i, t in enumerate(parsed_ts) if t is not None]
-        
-        best_S = ()
-        best_len = -1
-        best_dev = float('inf')
-        
-        for r in range(len(V), 0, -1):
-            for S
+            parsed = pd.to_datetime(val, errors="coerce")
+            if pd.isna(parsed):
+                timestamps.append(pd.NaT)
+                is_valid_initial.append(False)
+            else:
+                timestamps.append(parsed)
+                is_valid_initial.append(True)
+
+    result_df["_parsed_ts"] = timestamps
+    result_df["_is_valid"] = is_valid_initial
+
+    # Compute median duration for each consecutive activity transition from valid pairs
+    transition_durations = {1: [], 2: [], 3: [], 4: []}
+
+    for _, group in result_df.groupby("CaseID", sort=False):
+        ts_list = group["_parsed_ts"].tolist()
+        val_list = group["_is_valid"].tolist()
+
+        for k in range(1, 5):
+            if val_list[k - 1] and val_list[k]:
+                if ts_list[k] >= ts_list[k - 1]:
+                    transition_durations[k].append(ts_list[k] - ts_list[k - 1])
+
+    median_durations = {}
+    default_median = pd.Timedelta(hours=1)
+    for k in range(1, 5):
+        if len(transition_durations[k]) > 0:
+            median_durations[k] = pd.Series(transition_durations[k]).median()
+        else:
+            median_durations[k] = default_median
+
+    # Repair timestamps per case
+    repaired_timestamps = result_df["_parsed_ts"].copy()
+
+    for _, group in result_df.groupby("CaseID", sort=False):
+        indices = group.index.tolist()
+        ts_arr = [result_df.loc[idx, "_parsed_ts"] for idx in indices]
+        valid_arr = [result_df.loc[idx, "_is_valid"] for idx in indices]
+
+        # Invalidate timestamps that break chronological order
+        last_valid_ts = None
+        for k in range(5):
+            if valid_arr[k]:
+                if last_valid_ts is not None and ts_arr[k] < last_valid_ts:
+                    valid_arr[k] = False
+                else:
+                    last_valid_ts = ts_arr[k]
+
+        # Find first valid anchor index in the case
+        first_valid_idx = -1
+        for k in range(5):
+            if valid_arr[k]:
+                first_valid_idx = k
+                break
+
+        if first_valid_idx != -1:
+            # Backward repair before first valid index
+            for k in range(first_valid_idx - 1, -1, -1):
+                ts_arr[k] = ts_arr[k + 1] - median_durations[k + 1]
+                valid_arr[k] = True
+
+            # Forward repair for missing, truncated or out-of-order timestamps
+            for k in range(1, 5):
+                if not valid_arr[k] or ts_arr[k] < ts_arr[k - 1]:
+                    ts_arr[k] = ts_arr[k - 1] + median_durations[k]
+                    valid_arr[k] = True
+
+        for k in range(5):
+            repaired_timestamps.loc[indices[k]] = ts_arr[k]
+
+    result_df["Timestamp"] = repaired_timestamps
+    result_df.drop(columns=["_parsed_ts", "_is_valid"], inplace=True)
+
+    return result_df

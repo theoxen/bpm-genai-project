@@ -181,6 +181,14 @@ Write a Python function `fix_timestamps(df)` that repairs these errors.
   Change ONLY the timestamps that are wrong. Do not change any other column or any correct timestamp.
 - You may use pandas, numpy and scikit-learn.
 
+Avoid these common mistakes (the code runs with pandas 3 and scikit-learn 1.9):
+- Empty timestamps are NaN (a float), not text: check them with pd.isna() before using any string method.
+- Parse text with pd.to_datetime(..., errors="coerce"). Do date arithmetic only with pandas Timestamps and
+  pd.Timedelta (e.g. pd.Timedelta(seconds=x)), never by adding plain numbers to dates.
+- Turn a duration into seconds with pd.Timedelta(d).total_seconds() - numpy timedelta64 has no .total_seconds().
+- Use OneHotEncoder(sparse_output=False); the old argument sparse= no longer exists.
+- Keep the original index and row order: do not add, drop or reorder rows, and write results back by index.
+
 Method you MUST use: {method}
 
 First rows of the log:
